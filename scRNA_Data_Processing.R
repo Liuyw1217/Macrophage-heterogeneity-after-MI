@@ -13,7 +13,7 @@ library(dplyr)
 
 options(future.globals.maxSize = 300000 * 1024^2)
 
-# Load and process expression data
+# Load and process expression data,GSE163129--h5 file
 Control.data <- Read10X(data.dir = "Control\\filtered_feature_bc_matrix/")
 MI_1D.data <- Read10X(data.dir = "MI_1D\\filtered_feature_bc_matrix/")
 MI_3D.data <- Read10X(data.dir = "MI_3D\\filtered_feature_bc_matrix/")
