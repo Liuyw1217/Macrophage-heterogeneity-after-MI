@@ -1,3 +1,4 @@
+setwd("/home4/liuyw/R/Spatial/心肌梗死_空转_单细胞")
 # Load packages
 library(Seurat)
 library(ggplot2)
@@ -7,10 +8,10 @@ library(RColorBrewer)
 library(SPOTlight)
 
 # Load and process expression data
-VISIUM_MI_1D <- Load10X_Spatial(data.dir = "Visium\\Raw_Data\\1D/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
-VISIUM_MI_3D <- Load10X_Spatial(data.dir = "Visium\\Raw_Data\\3D/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
-VISIUM_MI_5D <- Load10X_Spatial(data.dir = "Visium\\Raw_Data\\5D/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
-VISIUM_MI_7D <- Load10X_Spatial(data.dir = "Visium\\Raw_Data\\7D/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
+VISIUM_MI_1D <- Load10X_Spatial(data.dir = "ST-seq/Day1/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
+VISIUM_MI_3D <- Load10X_Spatial(data.dir = "ST-seq/Day3/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
+VISIUM_MI_5D <- Load10X_Spatial(data.dir = "ST-seq/Day5/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
+VISIUM_MI_7D <- Load10X_Spatial(data.dir = "ST-seq/Day7/", filename = "filtered_feature_bc_matrix.h5", assay = "Spatial", filter.matrix = TRUE, to.upper = FALSE)
 
 VISIUM_MI_1D <- SCTransform(VISIUM_MI_1D, assay = "Spatial", verbose = FALSE)
 VISIUM_MI_3D <- SCTransform(VISIUM_MI_3D, assay = "Spatial", verbose = FALSE)
@@ -91,10 +92,10 @@ VISIUM_MI_5D <- SetIdent(VISIUM_MI_5D, value = 'SCT_snn_res.0.5')
 VISIUM_MI_7D <- SetIdent(VISIUM_MI_7D, value = 'SCT_snn_res.0.6')
 
 # Signature scores (Supplementary Figure 1)
-Cardiomyocyte_genes <- list(c("Myh7","Myh6","Actn2","Nkx2-5","Tnni3","Tnnt2"))
+Cardiomyocyte_genes <- list(c("Myh7","Myh6","Actn2","Nkx2-5","Tnni3","Tnnt2")) #心肌细胞基因
 Endothelial_genes <- list(c("Cdh5", "Ly6c1", "Kdr"))
 Fibro_genes <- list(c("Col1a1", "Pdgfra", "Lamc1"))
-
+#基因集打分的函数AddModuleScore（自定基因集）
 VISIUM_MI_1D <- AddModuleScore(object = VISIUM_MI_1D, features = Cardiomyocyte_genes, name = 'Cardiomyocyte')
 VISIUM_MI_3D <- AddModuleScore(object = VISIUM_MI_3D, features = Cardiomyocyte_genes, name = 'Cardiomyocyte')
 VISIUM_MI_5D <- AddModuleScore(object = VISIUM_MI_5D, features = Cardiomyocyte_genes, name = 'Cardiomyocyte')
@@ -122,6 +123,8 @@ SpatialFeaturePlot(VISIUM_MI_3D, features = c("Fibro1"), alpha = c(0.1,1.5))
 SpatialFeaturePlot(VISIUM_MI_5D, features = c("Fibro1"), alpha = c(0.1,1.5))
 SpatialFeaturePlot(VISIUM_MI_7D, features = c("Fibro1"), alpha = c(0.1,1.5))
 
+#plyr::mapvalues() 函数将VISIUM_MI_1D对象中的细胞身份标签从当前的标识符映射到新的标识符。
+#StashIdent将 Seurat 对象中的细胞身份标签保存到新的变量中。
 current.cluster.ids <- c(0,1,2,3,4,5,6,7,8)
 new.cluster.ids <- c(0,0,0,1,0,0,1,0,0)
 VISIUM_MI_1D@active.ident <- plyr::mapvalues(x = VISIUM_MI_1D@active.ident, from = current.cluster.ids, to = new.cluster.ids)
@@ -214,7 +217,7 @@ se_obj <- "{an_MI}/{robj_dir}/Processed_ST_{sample_id}.RDS" %>%
   glue::glue() %>%
   here::here() %>%
   readRDS(file = .)
-
+se_obj <- VISIUM_MI_1D
 
 # Create a name/color dataframe
 col_pal_v <- c("#f8766d", "#de8c00", "#b79f00", "#7cae00", "#00ba38", "#00c08b", "#00bfc4", "#00b4f0", "#619cff", "#c77cff", "#f564e3", "#ff64b0")
@@ -338,9 +341,9 @@ ct_plt_ls <- lapply(ct_all, function(ct) {
     ggplot2::scale_fill_gradientn(
       colors = grDevices::heat.colors(10, rev = TRUE),
       # Same number of breaks for all plots
-       breaks = seq(min(se_obj@meta.data[, ct]),
-                    max(se_obj@meta.data[, ct]),
-                    length.out = 3),
+      breaks = seq(min(se_obj@meta.data[, ct]),
+                   max(se_obj@meta.data[, ct]),
+                   length.out = 3),
       # 2 decimals in the legend
       labels = scaleFUN
       # limits = c(0, 1)
@@ -481,10 +484,10 @@ sct_plt_int <- SPOTlight::scatterpie_plot(se_obj = se_obj,
 
 
 sct_plt_int1 <- SPOTlight::spatial_scatterpie(se_obj = se_obj,
-                                             cell_types_all = ct_var,
-                                             img_path = here::here(sprintf("F:/Single_Cell_R/MI/Visium/Raw_Ref2020/%s/spatial/tissue_lowres_image.png", sample_id)),
-                                             pie_scale = 0.4,
-                                             slice = sample_id) +
+                                              cell_types_all = ct_var,
+                                              img_path = here::here(sprintf("F:/Single_Cell_R/MI/Visium/Raw_Ref2020/%s/spatial/tissue_lowres_image.png", sample_id)),
+                                              pie_scale = 0.4,
+                                              slice = sample_id) +
   ggplot2::scale_fill_manual(
     values = col_df[col_df$plt_name %in% ct_var, "ct_col"],
     breaks = col_df[col_df$plt_name %in% ct_var, "plt_name"]) +
@@ -637,7 +640,7 @@ decon_mtrx_ls <- SPOTlight::spotlight_deconvolution(
   se_sc = MI.integrated.1st.filtered,
   counts_spatial = se_obj@assays$Spatial@counts,
   clust_vr = "specific_cell_type_mod",
-  cluster_markers = CellType_Markers1,
+  cluster_markers = CellType_Markers1,  #差异基因存在scRNA的Seurat里
   cl_n = cl_n,
   hvg = hvg,
   ntop = ntop,
