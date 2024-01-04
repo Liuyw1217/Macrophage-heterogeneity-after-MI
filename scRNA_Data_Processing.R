@@ -1,3 +1,5 @@
+setwd("/home4/liuyw/R/Spatial/心肌梗死_空转_单细胞")
+
 # Load packages
 library(Seurat)
 library(SingleR)
@@ -14,11 +16,11 @@ library(dplyr)
 options(future.globals.maxSize = 300000 * 1024^2)
 
 # Load and process expression data,GSE163129--h5 file
-Control.data <- Read10X(data.dir = "Control\\filtered_feature_bc_matrix/")
-MI_1D.data <- Read10X(data.dir = "MI_1D\\filtered_feature_bc_matrix/")
-MI_3D.data <- Read10X(data.dir = "MI_3D\\filtered_feature_bc_matrix/")
-MI_5D.data <- Read10X(data.dir = "MI_5D\\filtered_feature_bc_matrix/")
-MI_7D.data <- Read10X(data.dir = "MI_7D\\filtered_feature_bc_matrix/")
+Control.data <- Read10X_h5("scRNA-seq/GSM4972357_Steady-state_filtered_feature_bc_matrix.h5")
+MI_1D.data <- Read10X_h5("scRNA-seq/GSM4972358_Day1_post-MI_filtered_feature_bc_matrix.h5")
+MI_3D.data <- Read10X_h5("scRNA-seq/GSM4972359_Day3_post-MI_filtered_feature_bc_matrix.h5")
+MI_5D.data <- Read10X_h5("scRNA-seq/GSM4972360_Day5_post-MI_filtered_feature_bc_matrix.h5")
+MI_7D.data <- Read10X_h5("scRNA-seq/GSM4972361_Day7_post-MI_filtered_feature_bc_matrix.h5")
 
 MI.control <- CreateSeuratObject(Control.data, project = "MI_CTR", min.cells = 10)
 MI.1D <- CreateSeuratObject(MI_1D.data, project = "MI_1D", min.cells = 10)
@@ -96,11 +98,13 @@ MI.list <- SplitObject(experiment.aggregate, split.by = "batchid")
 for (i in 1:length(MI.list)) {
   MI.list[[i]] <- NormalizeData(MI.list[[i]], verbose = FALSE)
   MI.list[[i]] <- FindVariableFeatures(MI.list[[i]], selection.method = "vst", 
-                                             nfeatures = 2000, verbose = FALSE)
+                                       nfeatures = 2000, verbose = FALSE)
 }
-
+# integrated using the canonical correlation analysis (CCA) method, “FindIntegrationAnchors” and “IntegrateData” functions in Seurat
+#执行完CCA算法后，作者就开始对整合后的数据进行后续的单细胞标准流程操作
 MI.anchors <- FindIntegrationAnchors(object.list = MI.list, dims = 1:30)
 MI.integrated <- IntegrateData(anchorset = MI.anchors, dims = 1:30)
+
 all.genes <- rownames(MI.integrated)
 MI.integrated <- ScaleData(MI.integrated, features = all.genes, verbose = FALSE)
 MI.integrated <- RunPCA(MI.integrated, verbose = FALSE)
@@ -115,12 +119,16 @@ DimPlot(object = MI.integrated, reduction = 'umap', group.by = "batchid", pt.siz
 DimPlot(object = MI.integrated, reduction = 'umap', group.by = "orig.ident", split.by = "batchid",  pt.size=0.5, ncol = 3) + NoLegend()
 MI.integrated <- SetIdent(MI.integrated, value = 'integrated_snn_res.1.4')
 
+#后续我们需要进行差异分析
+#但是需要注意我们差异分析的时候就不能使用CCA后合并的数据
+#而是需要使用原始的counts数据，因为我们使用CCA算法后抹去了差异
+#我们可以简单理解CCA后的目的是为了展示结果
 DefaultAssay(MI.integrated) <- "RNA"
 MI.integrated <- NormalizeData(MI.integrated, verbose = FALSE)
 all.genes <- rownames(MI.integrated)
 MI.integrated <- ScaleData(MI.integrated, features = all.genes, verbose = FALSE)
 markers_all_RNA <- FindAllMarkers(object = MI.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, test.use = "LR")
-write.csv(markers_all_RNA, file = "MI_preprocessing_cluster_allmarker_Genes_RNA_RES14.csv")
+# write.csv(markers_all_RNA, file = "MI_preprocessing_cluster_allmarker_Genes_RNA_RES14.csv")
 table(MI.integrated@meta.data$integrated_snn_res.1.4,MI.integrated@meta.data$batchid)
 
 # SingleR
@@ -129,15 +137,21 @@ MI.integrated.se <- as.SingleCellExperiment(MI.integrated, assay = "RNA")
 mrsd.common <- intersect(rownames(MI.integrated.se), rownames(mrsd.se))
 mrsd.se <- mrsd.se[mrsd.common,]
 MI.integrated.se <- MI.integrated.se[mrsd.common,]
+#归一化数据
 MI.integrated.se <- logNormCounts(MI.integrated.se)
+#注释（大类）
 MI.mrsd.pred <- SingleR(test = MI.integrated.se, ref = mrsd.se, method = "single", labels = mrsd.se$label.main)
-MI.integrated[["mrsd.main"]] <- DC.mrsd.pred$labels
+MI.integrated[["mrsd.main"]] <- MI.mrsd.pred$labels
+#注释（小类）
 MI.mrsd.pred <- SingleR(test = MI.integrated.se, ref = mrsd.se, method = "single", labels = mrsd.se$label.fine)
-MI.integrated[["mrsd.fine"]] <- DC.mrsd.pred$labels
+MI.integrated[["mrsd.fine"]] <- MI.mrsd.pred$labels
+plotScoreHeatmap(MI.mrsd.pred)
 
 # Filter Endothelial/Fibroblast, double cell type clusteres and other technical noise[PMID:30471926] (CL 5, 10, 12, 23, 24, 27, 29, 30) 
 MI.integrated.1st.filtered = subset(MI.integrated, idents = c(0,1,2,3,4,6,7,8,9,11,13,14,15,16,17,18,19,20,21,22,25,26,28,31,32,33))
 DefaultAssay(MI.integrated.1st.filtered) <- "integrated"
+#因为上述提取了感兴趣的细胞亚群
+#所以需要再次对细胞亚群进行降维和聚类，也就是说再次进行标准流程的操作
 MI.integrated.1st.filtered <- RunPCA(MI.integrated.1st.filtered, verbose = FALSE)
 ElbowPlot(object = MI.integrated.1st.filtered, ndims = 50)
 use.pcs = 1:40
@@ -145,32 +159,35 @@ MI.integrated.1st.filtered <- RunUMAP(MI.integrated.1st.filtered, reduction = "p
 MI.integrated.1st.filtered <- FindNeighbors(object = MI.integrated.1st.filtered, reduction = "pca", dims = use.pcs)
 MI.integrated.1st.filtered <- FindClusters(object = MI.integrated.1st.filtered, resolution = seq(0.5,2,0.1))
 sapply(grep("^integrated_snn_res",colnames(MI.integrated.1st.filtered@meta.data),value = TRUE), function(x) length(unique(MI.integrated.1st.filtered@meta.data[,x])))
-DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "integrated_snn_res.1.5", pt.size=1, label = TRUE, repel = TRUE) + NoLegend()
+DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "integrated_snn_res.1.3", pt.size=1, label = TRUE, repel = TRUE) + NoLegend()
 DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "batchid", pt.size=0.5)
 DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "orig.ident", split.by = "batchid",  pt.size=0.5, ncol = 3) + NoLegend()
-MI.integrated.1st.filtered <- SetIdent(MI.integrated.1st.filtered, value = 'integrated_snn_res.1.5')
+MI.integrated.1st.filtered <- SetIdent(MI.integrated.1st.filtered, value = 'integrated_snn_res.1.3')
 
 # Cluster rename
+table(MI.integrated.1st.filtered@meta.data$seurat_clusters,MI.integrated.1st.filtered@meta.data$mrsd.main)
 new.cluster.ids <- c("MAC", "MAC", "MAC", "MAC", "Neutrophil", "Neutrophil", "MAC", "MAC", "B", "MAC", "MAC", "Monocytes", "MAC", "NK", "MAC", "DC", "Neutrophil", "MAC", "T", "DC", "Monocytes", "Xcr1_DC", "Mature_DC", "DC", "ILC2", "MAC", "Plasma", "Mast")
 names(x = new.cluster.ids) <- levels(x = MI.integrated.1st.filtered)
+#RenameIdents用于重命名 Seurat 对象中的细胞身份标签。
 MI.integrated.1st.filtered <- RenameIdents(object = MI.integrated.1st.filtered, new.cluster.ids)
+#StashIdent将 Seurat 对象中的细胞身份标签保存到新的变量中。
 MI.integrated.1st.filtered <- StashIdent(MI.integrated.1st.filtered, save.name = "CellType")
 DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "CellType", pt.size=0.5)
 DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "CellType", split.by = "batchid",  pt.size=0.5, ncol = 2) + NoLegend()
 markers_all_RNA <- FindAllMarkers(object = MI.integrated.1st.filtered, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, test.use = "LR")
-write.csv(markers_all_RNA, file = "MI_1st_filtered_cluster_allmarker_Genes_RNA_RES15.csv")
-table(MI.integrated.1st.filtered@meta.data$integrated_snn_res.1.5,MI.integrated.1st.filtered@meta.data$batchid)
+write.csv(markers_all_RNA, file = "scRNA-seq/MI_1st_filtered_cluster_allmarker_Genes_RNA_RES15.csv")
+table(MI.integrated.1st.filtered@meta.data$integrated_snn_res.1.3,MI.integrated.1st.filtered@meta.data$batchid)
 
 # Main_Figure1
 DimPlot(object = MI.integrated.1st.filtered, reduction = 'umap', group.by = "CellType", pt.size=1) 
 MI.integrated.1st.filtered <- SetIdent(MI.integrated.1st.filtered, value = 'batchid')
-fig1bSS = subset(MI.integrated.1st.filtered, idents = "MI_7D")
+fig1bSS = subset(MI.integrated.1st.filtered, idents = "MI_CTR")
 DimPlot(object = fig1bSS, reduction = 'umap', group.by = "CellType", pt.size=1) + NoLegend()+ xlim(c(-13.5,13.5)) + ylim(c(-13,15))
-fig1bD1 = subset(MI.integrated.1st.filtered, idents = "MI_7D")
+fig1bD1 = subset(MI.integrated.1st.filtered, idents = "MI_1D")
 DimPlot(object = fig1bD1, reduction = 'umap', group.by = "CellType", pt.size=1) + NoLegend()+ xlim(c(-13.5,13.5)) + ylim(c(-13,15))
-fig1bD3 = subset(MI.integrated.1st.filtered, idents = "MI_7D")
+fig1bD3 = subset(MI.integrated.1st.filtered, idents = "MI_3D")
 DimPlot(object = fig1bD3, reduction = 'umap', group.by = "CellType", pt.size=1) + NoLegend()+ xlim(c(-13.5,13.5)) + ylim(c(-13,15))
-fig1bD5 = subset(MI.integrated.1st.filtered, idents = "MI_7D")
+fig1bD5 = subset(MI.integrated.1st.filtered, idents = "MI_5D")
 DimPlot(object = fig1bD5, reduction = 'umap', group.by = "CellType", pt.size=1) + NoLegend()+ xlim(c(-13.5,13.5)) + ylim(c(-13,15))
 fig1bD7 = subset(MI.integrated.1st.filtered, idents = "MI_7D")
 DimPlot(object = fig1bD7, reduction = 'umap', group.by = "CellType", pt.size=1) + NoLegend()+ xlim(c(-13.5,13.5)) + ylim(c(-13,15))
@@ -191,6 +208,7 @@ Mast_genes <- c("Cma1", "Kit", "Rab27b")
 MI.integrated.1st.filtered <- SetIdent(MI.integrated.1st.filtered, value = 'CellType')
 MI.integrated.1st.filtered@active.ident <- factor(MI.integrated.1st.filtered@active.ident, levels = c("Mast","Plasma","ILC2","Mature_DC","Xcr1_DC","T","DC","NK","Monocytes","B","Neutrophil","MAC"))
 DotPlot(object = MI.integrated.1st.filtered, features = c(Macrophage_genes,Neutrophil_genes,B_genes,Monocyte_genes,NK_genes,CD209DC_genes,T_genes,XcrDC_genes,MigratoryDC_genes,ILC2_genes,PC_genes,Mast_genes), cols = c("White", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
 FeaturePlot(MI.integrated.1st.filtered, features = "Adgre1",cols = c("gray", "red"), pt.size=1)
 FeaturePlot(MI.integrated.1st.filtered, features = "S100a9",cols = c("gray", "red"), pt.size=1)
 FeaturePlot(MI.integrated.1st.filtered, features = "Cd79a",cols = c("gray", "red"), pt.size=1)
@@ -236,6 +254,7 @@ MI.macrophage.recluster <- SetIdent(MI.macrophage.recluster, value = 'integrated
 MI.macrophage.recluster = subset(MI.macrophage.recluster, idents = c(0,1,2,3,4,5,6,7,8,9,10,11,12,14,15,16))
 current.cluster.ids <- c(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19)
 new.cluster.ids <- c(1,0,3,4,2,5,6,7,0,9,2,10,11,12,8,13,8,14,15)
+#plyr::mapvalues() 函数将 MI.macrophage.recluster 对象中的细胞身份标签从当前的标识符映射到新的标识符。
 MI.macrophage.recluster@active.ident <- plyr::mapvalues(x = MI.macrophage.recluster@active.ident, from = current.cluster.ids, to = new.cluster.ids)
 MI.macrophage.recluster <- StashIdent(MI.macrophage.recluster, save.name = "FigureCluster")
 DimPlot(object = MI.macrophage.recluster, reduction = 'umap', group.by = "FigureCluster", pt.size=1, label = TRUE, repel = TRUE)
@@ -313,7 +332,7 @@ plot_genes_in_pseudotime(MF_lineage_cds,
 
 MF_genes <- c("Mgl2", "Lyve1", "Folr2", "Fcrls", "Rgs10", "Trem2")
 MF_lineage_cds <- cds[rowData(cds)$gene_short_name %in% MF_genes,
-                       colData(cds)$DEGCluster %in% c("LateMF","EarlyMF","IFN","IntMF","cMono")]
+                      colData(cds)$DEGCluster %in% c("LateMF","EarlyMF","IFN","IntMF","cMono")]
 plot_genes_in_pseudotime(MF_lineage_cds,
                          color_cells_by="DEGCluster",
                          min_expr=0.5, cell_size = 2, panel_order = c("Trem2","Rgs10","Fcrls","Folr2","Lyve1","Mgl2")) + scale_color_manual(breaks = c("cMono", "EarlyMF", "IntMF", "IFN", "LateMF"), values=c("#ed68ed", "#00bfc4", "#00be68", "#0db802", "#f8766d"))
